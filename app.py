@@ -24,8 +24,27 @@ Görüntülerdeki bilgilere (takımlar, oranlar, form, gol istatistikleri, geçm
 Kurallar: Sadece görüntüde gördüğün bilgilere dayan, görmediğin veriyi uydurma. Eksik veri varsa bunu belirt.
 Bu bir tahmin, kesin sonuç değil; bunu en sonda tek cümleyle hatırlat. Türkçe yaz."""
 
-# Model çalışmazsa burayı Google AI Studio'daki güncel bir Flash modeliyle değiştir.
-MODEL = "gemini-flash-latest"
+client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+
+
+@st.cache_data(ttl=3600)
+def model_bul(_client):
+    """Google'ın o an sunduğu uygun bir Flash modelini otomatik bulur."""
+    adaylar = []
+    for m in _client.models.list():
+        ad = m.name.replace("models/", "")
+        eylemler = getattr(m, "supported_actions", None) or []
+        if "generateContent" not in eylemler:
+            continue
+        if "flash" not in ad:
+            continue
+        if any(x in ad for x in ["image", "tts", "live", "audio", "lite", "thinking", "robotics", "computer"]):
+            continue
+        adaylar.append(ad)
+    # Önce "preview/exp" olmayanlar, sonra en yeni sürüm adı
+    adaylar.sort(key=lambda a: (not any(x in a for x in ["preview", "exp"]), a), reverse=True)
+    return adaylar
+
 
 dosyalar = st.file_uploader(
     "Maç ekran görüntüsü (birden fazla yükleyebilirsin)",
@@ -41,11 +60,26 @@ if st.button("Analiz et", disabled=not dosyalar):
     metin = PROMPT + (f"\n\nEk not: {not_}" if not_ else "")
     parcalar.append(metin)
 
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     with st.spinner("Analiz ediliyor..."):
         try:
-            cevap = client.models.generate_content(model=MODEL, contents=parcalar)
-            st.markdown(cevap.text)
+            modeller = model_bul(client)
+            if not modeller:
+                st.error("Uygun model bulunamadı. API anahtarını kontrol et.")
+                st.stop()
+            son_hata = None
+            for model in modeller[:4]:
+                try:
+                    cevap = client.models.generate_content(model=model, contents=parcalar)
+                    st.markdown(cevap.text)
+                    st.caption(f"Kullanılan model: {model}")
+                    son_hata = None
+                    break
+                except Exception as e:
+                    son_hata = e
+                    if "404" not in str(e) and "NOT_FOUND" not in str(e):
+                        break
+            if son_hata:
+                st.error(f"Hata oluştu: {son_hata}")
         except Exception as e:
             st.error(f"Hata oluştu: {e}")
 
