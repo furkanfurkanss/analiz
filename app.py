@@ -1,3 +1,5 @@
+import time
+
 import streamlit as st
 from google import genai
 from google.genai import types
@@ -67,19 +69,33 @@ if st.button("Analiz et", disabled=not dosyalar):
                 st.error("Uygun model bulunamadı. API anahtarını kontrol et.")
                 st.stop()
             son_hata = None
-            for model in modeller[:4]:
-                try:
-                    cevap = client.models.generate_content(model=model, contents=parcalar)
-                    st.markdown(cevap.text)
-                    st.caption(f"Kullanılan model: {model}")
-                    son_hata = None
-                    break
-                except Exception as e:
-                    son_hata = e
-                    if "404" not in str(e) and "NOT_FOUND" not in str(e):
+            basarili = False
+            gecici = ["404", "NOT_FOUND", "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL"]
+            for model in modeller[:5]:
+                for deneme in range(3):
+                    try:
+                        cevap = client.models.generate_content(model=model, contents=parcalar)
+                        st.markdown(cevap.text)
+                        st.caption(f"Kullanılan model: {model}")
+                        basarili = True
                         break
-            if son_hata:
-                st.error(f"Hata oluştu: {son_hata}")
+                    except Exception as e:
+                        son_hata = e
+                        hata = str(e)
+                        if not any(k in hata for k in gecici):
+                            break  # geçici olmayan hata, denemeyi bırak
+                        if "404" in hata or "NOT_FOUND" in hata:
+                            break  # bu model yok, sıradakine geç
+                        time.sleep(4)  # yoğunluk: biraz bekle, tekrar dene
+                if basarili:
+                    break
+                if son_hata is not None and not any(k in str(son_hata) for k in gecici):
+                    break
+            if not basarili:
+                st.error(
+                    "Google şu an yoğun veya limit doldu. Birkaç dakika bekleyip tekrar dene. "
+                    f"(Ayrıntı: {son_hata})"
+                )
         except Exception as e:
             st.error(f"Hata oluştu: {e}")
 
